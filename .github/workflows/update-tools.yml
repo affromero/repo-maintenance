@@ -1,0 +1,85 @@
+name: Update scanner versions
+on:
+  schedule:
+    - cron: '23 8 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: update-scanner-versions
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.candidate.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+      - run: python3 scripts/update_tools.py
+      - id: candidate
+        shell: bash
+        run: |
+          if git diff --quiet -- tool-versions.json; then exit 0; fi
+          version=$(python3 -c 'import json; print(json.load(open("tool-versions.json"))["cargo-machete"])')
+          cargo install cargo-machete --version "$version" --locked
+          cargo machete --version
+          python3 -m unittest discover -s tests -v
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+  publish:
+    needs: validate
+    if: needs.validate.outputs.version != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+      - name: Open or resume the update proposal
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_VERSION: ${{ needs.validate.outputs.version }}
+        shell: bash
+        run: |
+          [[ "$CANDIDATE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          branch="automation/cargo-machete-$CANDIDATE_VERSION"
+          title="Update cargo-machete to $CANDIDATE_VERSION"
+          if gh pr list --head "$branch" --state all --json number --jq '.[].number' | grep -q .; then exit 0; fi
+          if git ls-remote --exit-code --heads origin "$branch"; then
+            git fetch origin "$branch"
+            git switch -c "$branch" FETCH_HEAD
+          else
+            git switch -c "$branch"
+            python3 -c 'import json,os; from pathlib import Path; p=Path("tool-versions.json"); d=json.loads(p.read_text()); d["cargo-machete"]=os.environ["CANDIDATE_VERSION"]; p.write_text(json.dumps(d,indent=2)+"\n")'
+            git add tool-versions.json
+            git diff --cached
+            git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m "$title"
+            git push origin "$branch"
+          fi
+          issue=$(gh issue list --state open --search "$title in:title" --json title,url --jq ".[] | select(.title == \"$title\") | .url" | head -1)
+          if [ -z "$issue" ]; then
+            issue=$(gh issue create --title "$title" --body "Update the centrally pinned scanner after its seven-day release cooldown. Acceptance: installation and maintenance runner tests pass.")
+          fi
+          cat > /tmp/update-pr.md <<EOF
+          ## Tracking issue
+
+          Closes $issue
+
+          ## Problem and change
+
+          Update the shared cargo-machete pin to $CANDIDATE_VERSION after the release cooldown.
+
+          ## Verification
+
+          Locked scanner installation and maintenance runner tests passed in a job without write credentials.
+
+          ## Compatibility and remaining work
+
+          Projects receive this update through their pinned action dependency updates.
+          Agent-assisted follow-up is authorized for this maintenance workflow.
+          EOF
+          gh pr create --head "$branch" --title "$title" --body-file /tmp/update-pr.md

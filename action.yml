@@ -1,0 +1,48 @@
+name: Repository maintenance
+description: Check dead code against reviewed exceptions and reject stale exceptions.
+inputs:
+  prepare:
+    description: Repository preparation command, run after npm ci.
+    default: ''
+  rust-paths:
+    description: Space-separated crate directories for cargo-machete.
+    default: ''
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: 22
+    - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+    - name: Install project dependencies
+      if: hashFiles('package-lock.json') != ''
+      shell: bash
+      run: npm ci
+    - name: Prepare generated imports
+      if: inputs.prepare != ''
+      shell: bash
+      env:
+        PREPARE_COMMAND: ${{ inputs.prepare }}
+      run: bash -e -o pipefail -c "$PREPARE_COMMAND"
+    - name: Check Rust dependencies
+      if: inputs.rust-paths != ''
+      shell: bash
+      env:
+        RUST_PATHS: ${{ inputs.rust-paths }}
+      run: |
+        version=$(python3 -c 'import json,os; print(json.load(open(os.environ["GITHUB_ACTION_PATH"] + "/tool-versions.json"))["cargo-machete"])')
+        cargo install cargo-machete --version "$version" --locked
+        read -r -a paths <<< "$RUST_PATHS"
+        cargo machete "${paths[@]}"
+    - name: Check source reachability
+      if: success() || failure()
+      shell: bash
+      run: python3 "$GITHUB_ACTION_PATH/scripts/audit.py" --root "$GITHUB_WORKSPACE"
+    - name: Upload reports
+      if: always()
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      with:
+        name: dead-code-reports
+        path: .maintenance-reports/
+        include-hidden-files: true
+        if-no-files-found: warn
