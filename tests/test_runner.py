@@ -53,6 +53,20 @@ class RunnerTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 2)
                 self.assertTrue((self.root / '.maintenance-reports/error.txt').is_file())
 
+    def test_standalone_package_is_scanned_relative_to_its_directory(self):
+        self.root = self.root / 'apps/desktop'
+        self.root.mkdir(parents=True)
+        for file in ['package.json', 'knip.json']:
+            (self.root / file).write_text('{}')
+        subprocess.run(['git', 'add', 'package.json', 'knip.json'], cwd=self.root, check=True)
+        self.knip = self.root / 'node_modules/.bin/knip'
+        self.knip.parent.mkdir(parents=True)
+        self.scanner('unused')
+        result = self.run_audit()
+        self.assertEqual(result.returncode, 1, result.stderr)
+        findings = json.loads((self.root / '.maintenance-reports/findings.json').read_text())
+        self.assertEqual({item['file'] for item in findings}, {'src/item.ts'})
+
 
 spec = importlib.util.spec_from_file_location('update_tools', ROOT / 'scripts/update_tools.py')
 update_tools = importlib.util.module_from_spec(spec)

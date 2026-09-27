@@ -1,6 +1,12 @@
 name: Repository maintenance
 description: Check dead code against reviewed exceptions and reject stale exceptions.
 inputs:
+  working-directory:
+    description: Project directory relative to the checked-out repository.
+    default: '.'
+  report-name:
+    description: Artifact name, unique when auditing multiple projects in one job.
+    default: dead-code-reports
   prepare:
     description: Repository preparation command, run after npm ci.
     default: ''
@@ -15,18 +21,21 @@ runs:
         node-version: 22
     - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
     - name: Install project dependencies
-      if: hashFiles('package-lock.json') != ''
+      if: hashFiles(format('{0}/package-lock.json', inputs.working-directory)) != ''
       shell: bash
+      working-directory: ${{ inputs.working-directory }}
       run: npm ci
     - name: Prepare generated imports
       if: inputs.prepare != ''
       shell: bash
+      working-directory: ${{ inputs.working-directory }}
       env:
         PREPARE_COMMAND: ${{ inputs.prepare }}
       run: bash -e -o pipefail -c "$PREPARE_COMMAND"
     - name: Check Rust dependencies
       if: inputs.rust-paths != ''
       shell: bash
+      working-directory: ${{ inputs.working-directory }}
       env:
         RUST_PATHS: ${{ inputs.rust-paths }}
       run: |
@@ -37,12 +46,13 @@ runs:
     - name: Check source reachability
       if: success() || failure()
       shell: bash
-      run: python3 "$GITHUB_ACTION_PATH/scripts/audit.py" --root "$GITHUB_WORKSPACE"
+      working-directory: ${{ inputs.working-directory }}
+      run: python3 "$GITHUB_ACTION_PATH/scripts/audit.py" --root "$PWD"
     - name: Upload reports
       if: always()
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
       with:
-        name: dead-code-reports
-        path: .maintenance-reports/
+        name: ${{ inputs.report-name }}
+        path: ${{ inputs.working-directory }}/.maintenance-reports/
         include-hidden-files: true
         if-no-files-found: warn
