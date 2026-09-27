@@ -11,6 +11,12 @@ Knip dev dependency, and a tracked `knip.json` describing runtime entry points.
 The optional `prepare` input generates imports such as Prisma clients. The
 optional `rust-paths` input lists crate directories separated by spaces.
 
+For a standalone package excluded from npm workspaces, invoke the action again
+with `working-directory` set to that package and a distinct `report-name`.
+The package keeps its own lockfile, Knip dependency, entry-point configuration,
+and exception file. Installation, preparation, scanning, and reports use that
+directory. Root callers retain the default repository-root behavior.
+
 Run callers on every pull request, pushes to main, a weekly schedule, and manual
 dispatch. Give the workflow read-only repository permissions. Enable the stable
 dead-code job as a required check alongside existing project tests.
